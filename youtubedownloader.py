@@ -23,15 +23,17 @@ import re
 
 
 class DownloadThread(QThread):
-    progress = pyqtSignal(int)
-    def __init__(self, url, path):
+    finished = pyqtSignal()
+
+    def __init__(self, url, ui):
         super().__init__()
-        self.url = url
-        self.path = path
+        self.__url = url
+        self.__ui = ui
 
     def run(self):
-        yt = pytube.YouTube(self.url)
+        yt = pytube.YouTube(self.__url, on_progress_callback=self.__ui.show_progress, on_complete_callback=self.__ui.complete_func)
         yt.streams.get_lowest_resolution().download()
+        self.finished.emit()
 
 
 class Ui_MainWindow(object):
@@ -285,6 +287,19 @@ class Ui_MainWindow(object):
     def update_progress_bar(self, progress):
         self.progressBar.setValue(progress)
 
+    def show_progress(self, stream, chunk, bytes_remaining):
+        total_size = stream.filesize
+        bytes_downloaded = total_size - bytes_remaining
+        percentage_of_completion = int(bytes_downloaded / total_size * 100)
+        self.progressBar.setValue(percentage_of_completion)
+        print("Percent: " + str(percentage_of_completion))
+
+    def complete_func(self, stream, file_path):
+        print("Complete, file path: " + file_path)
+        self.stackedWidget.setCurrentWidget(self.page_3)
+        self.txtResult.setReadOnly(True)
+        self.txtResult.setText("Downloaded Successfully.")
+
     def downloadButton_onclick(self):
         link = self.txtLink.toPlainText()
         self.txtStatus.setReadOnly(True)
@@ -300,7 +315,7 @@ class Ui_MainWindow(object):
             download_caption = self.chkDownloadCaption.isChecked()
             download_thumbnail = self.chkDownloadThumbnail.isChecked()
 
-            yt = pytube.YouTube(link)
+            yt = pytube.YouTube(link, on_progress_callback=self.show_progress, on_complete_callback=self.complete_func)
             title = yt.title
 
             self.stackedWidget.setCurrentWidget(self.page_2)
@@ -317,13 +332,10 @@ class Ui_MainWindow(object):
             if audio_only and not low_resolution:
                 yt.streams.get_audio_only().download()
             '''
-
+            # yt.streams.get_lowest_resolution().download()
             # threading test
-
-            self.stackedWidget.setCurrentWidget(self.page_2)
-            self.progressBar.setValue(5)
-            self.download_thread = DownloadThread(link, title+'.mp4')
-            self.download_thread.progress.connect(self.update_progress_bar)
+            self.download_thread = DownloadThread(link, self)
+            #self.download_thread.finished.connect()
             self.download_thread.start()
 
 
@@ -362,9 +374,7 @@ class Ui_MainWindow(object):
                 else:
                     self.txtResult.setText('Thumbnail Image Couldn\'t be retrieved')
 
-            self.stackedWidget.setCurrentWidget(self.page_3)
-            self.txtResult.setReadOnly(True)
-            self.txtResult.setText("Downloaded Successfully.")
+
 
 if __name__ == "__main__":
     import sys
@@ -374,25 +384,3 @@ if __name__ == "__main__":
     ui.setupUi(MainWindow)
     MainWindow.show()
     sys.exit(app.exec_())
-'''
-class DownloadThread(QThread):
-    progress = pyqtSignal(int)
-    def __init__(self, url, path, resolution):
-        super().__init__()
-        self.url = url
-        self.path = path
-        self.resolution = resolution
-
-    def run(self):
-        yt = pytube.YouTube(self.url)
-        stream = yt.streams.get_by_resolution(self.resolution)
-        file_size = stream.filesize
-        downloaded = 0
-        chunk_size = 1024 * 1024  # 1 MB
-        with open(self.path, "wb") as f:
-            for chunk in stream.iter_content(chunk_size=chunk_size):
-                f.write(chunk)
-                downloaded += len(chunk)
-                progress = int(downloaded / file_size * 100)
-                self.progress.emit(progress)
-'''
