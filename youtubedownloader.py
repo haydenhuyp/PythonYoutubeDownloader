@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 import shutil
+import time
+from threading import Thread
 
 import requests
 import youtube_transcript_api
@@ -13,12 +15,30 @@ import youtube_transcript_api
 
 from PyQt5 import QtCore, QtGui, QtWidgets, Qt
 import pytube
+from PyQt5.QtCore import QObject, pyqtSignal, QThread, pyqtSlot
 from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled
 from youtube_transcript_api.formatters import Formatter
 from youtube_transcript_api.formatters import SRTFormatter
 import re
 
+
+class DownloadThread(QThread):
+    progress = pyqtSignal(int)
+    def __init__(self, url, path):
+        super().__init__()
+        self.url = url
+        self.path = path
+
+    def run(self):
+        yt = pytube.YouTube(self.url)
+        yt.streams.get_lowest_resolution().download()
+
+
 class Ui_MainWindow(object):
+
+    def __init__(self):
+        self.download_thread = None
+
     def setupUi(self, MainWindow):
         MainWindow.setObjectName("MainWindow")
         MainWindow.resize(1000, 393)
@@ -222,13 +242,14 @@ class Ui_MainWindow(object):
 
         self.chkLowResolution.stateChanged.connect(self.on_low_resolution_changed)
         self.chkAudio.stateChanged.connect(self.on_audio_changed)
+        self.btnBackToHomePage.clicked.connect(self.backToHomePage_onclick)
 
 
     def retranslateUi(self, MainWindow):
         _translate = QtCore.QCoreApplication.translate
         MainWindow.setWindowTitle(_translate("MainWindow", "MainWindow"))
         self.label.setText(_translate("MainWindow", "YOUTUBE DOWNLOADER"))
-        self.txtLink.setPlaceholderText(_translate("MainWindow", "Enter Youtube Link(s) Here, Separated by Comma"))
+        self.txtLink.setPlaceholderText(_translate("MainWindow", "Enter Youtube Link Here"))
         self.chkLowResolution.setText(_translate("MainWindow", "Low Resolution"))
         self.chkAudio.setText(_translate("MainWindow", "Audio Only"))
         self.chkDownloadCaption.setText(_translate("MainWindow", "Download Caption"))
@@ -238,6 +259,8 @@ class Ui_MainWindow(object):
         self.btnOpenDownloadFolder.setText(_translate("MainWindow", "Open Downloaded Folder"))
         self.btnBackToHomePage.setText(_translate("MainWindow", "Back To Home Page"))
 
+    def backToHomePage_onclick(self):
+        self.stackedWidget.setCurrentWidget(self.page)
     def clearButton_onclick(self):
         self.chkLowResolution.setChecked(False)
         self.chkAudio.setChecked(False)
@@ -259,10 +282,12 @@ class Ui_MainWindow(object):
         elif not audio_state:
             self.chkLowResolution.setEnabled(True)
 
-
+    def update_progress_bar(self, progress):
+        self.progressBar.setValue(progress)
 
     def downloadButton_onclick(self):
         link = self.txtLink.toPlainText()
+        self.txtStatus.setReadOnly(True)
         # TODO: process YouTube links, validate it
         youtube_regex = r'^https?://(?:www\.)?youtube\.com/watch\?(?=.*v=\w+)(?:\S+)?$'
 
@@ -275,15 +300,15 @@ class Ui_MainWindow(object):
             download_caption = self.chkDownloadCaption.isChecked()
             download_thumbnail = self.chkDownloadThumbnail.isChecked()
 
-            link = self.txtLink.toPlainText()
             yt = pytube.YouTube(link)
             title = yt.title
 
-            # TODO: process all check boxes
-
             self.stackedWidget.setCurrentWidget(self.page_2)
             self.txtStatus.setText(f"Downloading: {title}")
+            # TODO: THREADING
             # highest or lowest solution
+
+            '''
             if low_resolution:
                 yt.streams.get_lowest_resolution().download()
             else:
@@ -291,6 +316,16 @@ class Ui_MainWindow(object):
             # audio only
             if audio_only and not low_resolution:
                 yt.streams.get_audio_only().download()
+            '''
+
+            # threading test
+
+            self.stackedWidget.setCurrentWidget(self.page_2)
+            self.progressBar.setValue(5)
+            self.download_thread = DownloadThread(link, title+'.mp4')
+            self.download_thread.progress.connect(self.update_progress_bar)
+            self.download_thread.start()
+
 
             # caption
             if download_caption:
@@ -319,17 +354,14 @@ class Ui_MainWindow(object):
                 r = requests.get(image_url, stream=True)
                 filename = image_url.split("/")[-1]
                 if r.status_code == 200:
-                    # Set decode_content value to True, otherwise the downloaded image file's size will be zero.
                     r.raw.decode_content = True
 
-                    # Open a local file with wb ( write binary ) permission.
                     with open(filename, 'wb') as f:
                         shutil.copyfileobj(r.raw, f)
                     self.txtResult.setText('Thumbnail Image sucessfully Downloaded')
                 else:
-                    self.txtResult.setText('Thumbnail Image Couldn\'t be retreived')
+                    self.txtResult.setText('Thumbnail Image Couldn\'t be retrieved')
 
-            # https://stackoverflow.com/questions/148963/keeping-guis-responsive-during-long-running-tasks
             self.stackedWidget.setCurrentWidget(self.page_3)
             self.txtResult.setReadOnly(True)
             self.txtResult.setText("Downloaded Successfully.")
@@ -342,3 +374,25 @@ if __name__ == "__main__":
     ui.setupUi(MainWindow)
     MainWindow.show()
     sys.exit(app.exec_())
+'''
+class DownloadThread(QThread):
+    progress = pyqtSignal(int)
+    def __init__(self, url, path, resolution):
+        super().__init__()
+        self.url = url
+        self.path = path
+        self.resolution = resolution
+
+    def run(self):
+        yt = pytube.YouTube(self.url)
+        stream = yt.streams.get_by_resolution(self.resolution)
+        file_size = stream.filesize
+        downloaded = 0
+        chunk_size = 1024 * 1024  # 1 MB
+        with open(self.path, "wb") as f:
+            for chunk in stream.iter_content(chunk_size=chunk_size):
+                f.write(chunk)
+                downloaded += len(chunk)
+                progress = int(downloaded / file_size * 100)
+                self.progress.emit(progress)
+'''
