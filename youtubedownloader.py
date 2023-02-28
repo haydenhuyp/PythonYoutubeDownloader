@@ -1,5 +1,8 @@
 # -*- coding: utf-8 -*-
+import shutil
 
+import requests
+import youtube_transcript_api
 # Form implementation generated from reading ui file 'design.ui'
 #
 # Created by: PyQt5 UI code generator 5.15.9
@@ -10,7 +13,10 @@
 
 from PyQt5 import QtCore, QtGui, QtWidgets, Qt
 import pytube
-
+from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled
+from youtube_transcript_api.formatters import Formatter
+from youtube_transcript_api.formatters import SRTFormatter
+import re
 
 class Ui_MainWindow(object):
     def setupUi(self, MainWindow):
@@ -238,6 +244,7 @@ class Ui_MainWindow(object):
         self.chkDownloadCaption.setChecked(False)
         self.chkDownloadThumbnail.setChecked(False)
         self.txtLink.setText("")
+        self.txtError.setText("")
 
     def on_low_resolution_changed(self):
         low_res_state = self.chkLowResolution.isChecked()
@@ -255,29 +262,77 @@ class Ui_MainWindow(object):
 
 
     def downloadButton_onclick(self):
-        # TODO: process YouTube links
-        low_resolution = self.chkLowResolution.isChecked()
-        audio_only = self.chkAudio.isChecked()
-        download_caption = self.chkDownloadCaption.isChecked()
-        download_thumbnail = self.chkDownloadThumbnail.isChecked()
-
         link = self.txtLink.toPlainText()
-        yt = pytube.YouTube(link)
-        title = yt.title
+        # TODO: process YouTube links, validate it
+        youtube_regex = r'^https?://(?:www\.)?youtube\.com/watch\?(?=.*v=\w+)(?:\S+)?$'
 
-        # TODO: process all check boxes
-        
+        # Check if the link matches the YouTube regex pattern
+        if not re.match(youtube_regex, link):
+            self.txtError.setText("Youtube link is not valid")
+        else:
+            low_resolution = self.chkLowResolution.isChecked()
+            audio_only = self.chkAudio.isChecked()
+            download_caption = self.chkDownloadCaption.isChecked()
+            download_thumbnail = self.chkDownloadThumbnail.isChecked()
 
-        self.stackedWidget.setCurrentWidget(self.page_2)
-        self.txtStatus.setText(f"Downloading: {title}")
-        yt.streams.get_highest_resolution().download()
+            link = self.txtLink.toPlainText()
+            yt = pytube.YouTube(link)
+            title = yt.title
 
-        self.stackedWidget.setCurrentWidget(self.page_3)
-        self.txtResult.setReadOnly(True)
-        self.txtResult.setText("Downloaded Successfully.")
+            # TODO: process all check boxes
 
+            self.stackedWidget.setCurrentWidget(self.page_2)
+            self.txtStatus.setText(f"Downloading: {title}")
+            # highest or lowest solution
+            if low_resolution:
+                yt.streams.get_lowest_resolution().download()
+            else:
+                yt.streams.get_highest_resolution().download()
+            # audio only
+            if audio_only and not low_resolution:
+                yt.streams.get_audio_only().download()
 
+            # caption
+            if download_caption:
+                try:
+                    transcript = YouTubeTranscriptApi.get_transcript("qVtsMOCYYWk", languages=['en'])
 
+                    # in text format
+                    file = open('subtitle.txt', 'w')
+                    for line in transcript:
+                        file.write(line['text'] + '\n')
+                    file.close()
+
+                    # in srt format
+                    formatter = SRTFormatter()
+                    srt_formatted = formatter.format_transcript(transcript)
+                    with open('subtitle.srt', 'w', encoding='utf-8') as srt_file:
+                        srt_file.write(srt_formatted)
+                except TranscriptsDisabled:
+                    self.txtResult.setText("Caption is not supported for this video")
+                except:
+                    print("Errors in Subtitle File")
+
+            # thumbnail
+            if download_thumbnail:
+                image_url = yt.thumbnail_url
+                r = requests.get(image_url, stream=True)
+                filename = image_url.split("/")[-1]
+                if r.status_code == 200:
+                    # Set decode_content value to True, otherwise the downloaded image file's size will be zero.
+                    r.raw.decode_content = True
+
+                    # Open a local file with wb ( write binary ) permission.
+                    with open(filename, 'wb') as f:
+                        shutil.copyfileobj(r.raw, f)
+                    self.txtResult.setText('Thumbnail Image sucessfully Downloaded')
+                else:
+                    self.txtResult.setText('Thumbnail Image Couldn\'t be retreived')
+
+            # https://stackoverflow.com/questions/148963/keeping-guis-responsive-during-long-running-tasks
+            self.stackedWidget.setCurrentWidget(self.page_3)
+            self.txtResult.setReadOnly(True)
+            self.txtResult.setText("Downloaded Successfully.")
 
 if __name__ == "__main__":
     import sys
