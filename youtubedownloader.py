@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
+import os
 import shutil
 import time
 from threading import Thread
 
 import requests
+from pathlib import Path
 import youtube_transcript_api
 # Form implementation generated from reading ui file 'design.ui'
 #
@@ -17,7 +19,6 @@ from PyQt5 import QtCore, QtGui, QtWidgets, Qt
 import pytube
 from PyQt5.QtCore import QObject, pyqtSignal, QThread, pyqtSlot
 from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled
-from youtube_transcript_api.formatters import Formatter
 from youtube_transcript_api.formatters import SRTFormatter
 import re
 
@@ -25,16 +26,20 @@ import re
 class DownloadThread(QThread):
     finished = pyqtSignal()
 
-    def __init__(self, url, ui):
+    def __init__(self, url, location, resolution, ui):
         super().__init__()
         self.__url = url
+        self.__resolution = resolution
         self.__ui = ui
+        self.__location = location
 
     def run(self):
         yt = pytube.YouTube(self.__url, on_progress_callback=self.__ui.show_progress, on_complete_callback=self.__ui.complete_func)
-        yt.streams.get_lowest_resolution().download()
+        if self.__resolution == 'low_resolution':
+            yt.streams.get_lowest_resolution().download(self.__location)
+        else:
+            yt.streams.get_highest_resolution().download(self.__location)
         self.finished.emit()
-
 
 class Ui_MainWindow(object):
 
@@ -241,11 +246,10 @@ class Ui_MainWindow(object):
         # man-made code
         self.btnClear.clicked.connect(lambda: self.clearButton_onclick())
         self.btnDownload.clicked.connect(lambda: self.downloadButton_onclick())
-
         self.chkLowResolution.stateChanged.connect(self.on_low_resolution_changed)
         self.chkAudio.stateChanged.connect(self.on_audio_changed)
         self.btnBackToHomePage.clicked.connect(self.backToHomePage_onclick)
-
+        self.btnOpenDownloadFolder.clicked.connect(self.openDownloadedFolder_onClick)
 
     def retranslateUi(self, MainWindow):
         _translate = QtCore.QCoreApplication.translate
@@ -258,7 +262,7 @@ class Ui_MainWindow(object):
         self.chkDownloadThumbnail.setText(_translate("MainWindow", "Download Thumbnail"))
         self.btnClear.setText(_translate("MainWindow", "Clear"))
         self.btnDownload.setText(_translate("MainWindow", "Download"))
-        self.btnOpenDownloadFolder.setText(_translate("MainWindow", "Open Downloaded Folder"))
+        self.btnOpenDownloadFolder.setText(_translate("MainWindow", "Open File in Folder"))
         self.btnBackToHomePage.setText(_translate("MainWindow", "Back To Home Page"))
 
     def backToHomePage_onclick(self):
@@ -287,6 +291,9 @@ class Ui_MainWindow(object):
     def update_progress_bar(self, progress):
         self.progressBar.setValue(progress)
 
+    def openDownloadedFolder_onClick(self):
+        os.startfile(str(Path.home() / "Downloads"))
+
     def show_progress(self, stream, chunk, bytes_remaining):
         total_size = stream.filesize
         bytes_downloaded = total_size - bytes_remaining
@@ -298,12 +305,22 @@ class Ui_MainWindow(object):
         print("Complete, file path: " + file_path)
         self.stackedWidget.setCurrentWidget(self.page_3)
         self.txtResult.setReadOnly(True)
-        self.txtResult.setText("Downloaded Successfully.")
+        self.txtResult.setText("Video is Downloaded Successfully and saved in your download folder.")
+
+    def extract_video_id(youtube_link):
+        video_id = None
+        match = re.search(r"youtube\.com/watch\?v=([A-Za-z0-9\-_]+)", youtube_link)
+        if match:
+            video_id = match.group(1)
+        else:
+            match = re.search(r"youtu\.be/([A-Za-z0-9\-_]+)", youtube_link)
+            if match:
+                video_id = match.group(1)
+        return video_id
 
     def downloadButton_onclick(self):
         link = self.txtLink.toPlainText()
         self.txtStatus.setReadOnly(True)
-        # TODO: process YouTube links, validate it
         youtube_regex = r'^https?://(?:www\.)?youtube\.com/watch\?(?=.*v=\w+)(?:\S+)?$'
 
         # Check if the link matches the YouTube regex pattern
@@ -315,37 +332,28 @@ class Ui_MainWindow(object):
             download_caption = self.chkDownloadCaption.isChecked()
             download_thumbnail = self.chkDownloadThumbnail.isChecked()
 
+            location = str(Path.home() / "Downloads")
             yt = pytube.YouTube(link, on_progress_callback=self.show_progress, on_complete_callback=self.complete_func)
             title = yt.title
 
             self.stackedWidget.setCurrentWidget(self.page_2)
             self.txtStatus.setText(f"Downloading: {title}")
-            # TODO: THREADING
             # highest or lowest solution
-
-            '''
             if low_resolution:
-                yt.streams.get_lowest_resolution().download()
+                self.download_thread = DownloadThread(link, location, 'low_resolution', self)
+            elif audio_only and not low_resolution:
+                # TODO: Put audio only task into thread
+                yt.streams.get_audio_only().download(location)
             else:
-                yt.streams.get_highest_resolution().download()
-            # audio only
-            if audio_only and not low_resolution:
-                yt.streams.get_audio_only().download()
-            '''
-            # yt.streams.get_lowest_resolution().download()
-            # threading test
-            self.download_thread = DownloadThread(link, self)
-            #self.download_thread.finished.connect()
+                self.download_thread = DownloadThread(link, location, 'high_resolution', self)
             self.download_thread.start()
-
 
             # caption
             if download_caption:
                 try:
-                    transcript = YouTubeTranscriptApi.get_transcript("qVtsMOCYYWk", languages=['en'])
-
+                    transcript = YouTubeTranscriptApi.get_transcript(self.extract_video_id(link), languages=['en'])
                     # in text format
-                    file = open('subtitle.txt', 'w')
+                    file = open(str(Path.home() / "Downloads") + '/subtitle.txt', 'w')
                     for line in transcript:
                         file.write(line['text'] + '\n')
                     file.close()
@@ -364,16 +372,15 @@ class Ui_MainWindow(object):
             if download_thumbnail:
                 image_url = yt.thumbnail_url
                 r = requests.get(image_url, stream=True)
-                filename = image_url.split("/")[-1]
+                filename = str(Path.home() / "Downloads") + '/' + title
                 if r.status_code == 200:
                     r.raw.decode_content = True
 
                     with open(filename, 'wb') as f:
                         shutil.copyfileobj(r.raw, f)
-                    self.txtResult.setText('Thumbnail Image sucessfully Downloaded')
+                    self.txtResult.setText('Thumbnail Image successfully Downloaded')
                 else:
                     self.txtResult.setText('Thumbnail Image Couldn\'t be retrieved')
-
 
 
 if __name__ == "__main__":
